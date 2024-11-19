@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"bytes"
 	"regexp"
 	"sort"
 
@@ -149,6 +150,36 @@ func getDependencies(path string, terragruntOptions *options.TerragruntOptions) 
 			}
 		}
 
+		var pathorig = path
+
+		// Check if file has copy_terraform_lock_file argument
+		fileContent, err := os.ReadFile(path)
+		if err != nil {
+			return nil, err
+		}
+
+		// If file contains copy_terraform_lock_file, create temp file with modified content
+		if bytes.Contains(fileContent, []byte("copy_terraform_lock_file")) {
+			// Create temp file
+			tmpFile, err := os.CreateTemp("", "terragrunt-*.hcl")
+			if err != nil {
+				return nil, err
+			}
+			defer os.Remove(tmpFile.Name()) // Clean up temp file when done
+
+			// Remove the copy_terraform_lock_file line
+			re := regexp.MustCompile(`(?m)^\s*copy_terraform_lock_file\s*=\s*.*$\n?`)
+			newContent := re.ReplaceAll(fileContent, []byte(""))
+
+			// Write modified content to temp file
+			if err := os.WriteFile(tmpFile.Name(), newContent, 0644); err != nil {
+				return nil, err
+			}
+
+			// Update path to use temp file for subsequent operations
+			path = tmpFile.Name()
+		}
+
 		// Parse the HCL file
 		decodeTypes := []config.PartialDecodeSectionType{
 			config.DependencyBlock,
@@ -160,6 +191,8 @@ func getDependencies(path string, terragruntOptions *options.TerragruntOptions) 
 			getDependenciesCache.set(path, getDependenciesOutput{nil, err})
 			return nil, err
 		}
+
+		path = pathorig
 
 		// Parse out locals
 		locals, err := parseLocals(path, terragruntOptions, nil)
